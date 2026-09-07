@@ -32,13 +32,28 @@ dotnet build
 dotnet run --project src/Cli
 ```
 
-### Publish (self-contained)
+### JSON Output
+
+Run with the `--json` flag to print the same environment information as a single-line JSON object instead of a table:
+
+```bash
+dotnet run --project src/Cli -- --json
+```
+
+### Self-Contained Publish (optional)
 
 ```bash
 dotnet publish src/Cli -c Release -r <RID> --self-contained true
 ```
 
 Replace `<RID>` with your target runtime identifier (e.g. `win-x64`, `linux-x64`, `osx-arm64`).
+
+#### Publish Size Comparison
+
+| RID | Publish folder size |
+|-----|---------------------|
+| linux-x64 | 80M |
+| win-x64 | 77M |
 
 ## Environment
 
