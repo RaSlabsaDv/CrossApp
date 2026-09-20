@@ -16,18 +16,43 @@ dotnet run --project src/Cli
 
 #### Publish Size Comparison
 
-| RID | Mode | Size publish | runtime need |
+| RID | Mode | Size publish | Runtime |
 |-----|-------|-----------------|-------------------|
 | linux-x64 | self-contained | 80M | no |
 | linux-x64 | framework-dependent | 132K | yes (.NET 10) |
 | win-x64 | self-contained | 77M | no |
 | win-x64 | framework-dependent | 212K | yes (.NET 10) |
 
-**Self-contained** publish bundles the entire .NET runtime along with the
-app, so it's significantly larger but can run on a machine with no .NET
-installed. **Framework-dependent** publish contains only the app's own code
-and dependencies, is much smaller, but requires a compatible .NET Runtime
-already installed on the target machine.
+#### Additional publish options Comparison
+
+| RID | Mode | Size publish | Runtime |
+|-----|-------|-----------------|---------|
+| linux-x64 | self-contained + SingleFile | 74M | no |
+| linux-x64 | self-contained + Trimmed | 24M | no |
+
+### Multi-targeting Build Note (optional task)
+
+`Core/EnvironmentInfo.cs` uses conditional compilation to show which
+TFM the assembly was built for:
+
+```csharp
+#if NET10_0_OR_GREATER
+    private const string BuildNote = "збірка під net10.0";
+#else
+    private const string BuildNote = "збірка під net9.0";
+#endif
+```
+
+Verified with:
+
+```bash
+dotnet run --project src/Cli -f net9.0
+dotnet run --project src/Cli -f net10.0
+```
+
+Each run prints a different `Примітка збірки` line, confirming the
+conditional compilation works per-TFM.
+
 
 ## Environment
 

@@ -3,13 +3,21 @@ namespace Core;
 
 public static class EnvironmentInfo
 {
+
+    #if NET10_0_OR_GREATER
+        private const string BuildNote = "збірка під net10.0";
+    #else
+        private const string BuildNote = "збірка під net9.0";
+    #endif
+
     public static EnvironmentReport Collect() => new(
         RuntimeInformation.OSDescription,
         RuntimeInformation.FrameworkDescription,
         RuntimeInformation.ProcessArchitecture.ToString(),
         DetectRid(),
         RuntimeInformation.RuntimeIdentifier,
-        AppContext.BaseDirectory);
+        AppContext.BaseDirectory,
+        BuildNote);
 
     private static string DetectRid()
     {

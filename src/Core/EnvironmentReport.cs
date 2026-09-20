@@ -6,4 +6,5 @@ public sealed record EnvironmentReport(
     string ProcessArchitecture,
     string DetectedRid,
     string ReportedRid,
-    string BaseDirectory);
+    string BaseDirectory,
+    string BuildNote);
