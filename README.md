@@ -1,23 +1,5 @@
 # CrossApp
 
-A cross-platform programming course project, built incrementally across 16 lab assignments.
-
-## Domain: Orders
-
-CrossApp manages customers, product catalog, and order processing.
-
-### Entities
-
-- **Customer** — a person or company placing orders (name, contact info).
-- **Category** — a product category used to organize the catalog (e.g. Electronics, Groceries).
-- **Product** — an item available for purchase, belonging to a Category (name, price, SKU).
-- **Order** — a purchase made by a Customer, containing one or more order lines, with a status and date.
-- **OrderLine** — a single line item within an Order, referencing a Product, quantity, and unit price.
-
-### Purpose
-
-The application supports placing customer orders, organizing products by category, and calculating order totals based on order lines.
-
 ## Getting Started
 
 ### Prerequisites
@@ -32,28 +14,20 @@ dotnet build
 dotnet run --project src/Cli
 ```
 
-### JSON Output
-
-Run with the `--json` flag to print the same environment information as a single-line JSON object instead of a table:
-
-```bash
-dotnet run --project src/Cli -- --json
-```
-
-### Self-Contained Publish (optional)
-
-```bash
-dotnet publish src/Cli -c Release -r <RID> --self-contained true
-```
-
-Replace `<RID>` with your target runtime identifier (e.g. `win-x64`, `linux-x64`, `osx-arm64`).
-
 #### Publish Size Comparison
 
-| RID | Publish folder size |
-|-----|---------------------|
-| linux-x64 | 80M |
-| win-x64 | 77M |
+| RID | Mode | Size publish | runtime need |
+|-----|-------|-----------------|-------------------|
+| linux-x64 | self-contained | 80M | no |
+| linux-x64 | framework-dependent | 132K | yes (.NET 10) |
+| win-x64 | self-contained | 77M | no |
+| win-x64 | framework-dependent | 212K | yes (.NET 10) |
+
+**Self-contained** publish bundles the entire .NET runtime along with the
+app, so it's significantly larger but can run on a machine with no .NET
+installed. **Framework-dependent** publish contains only the app's own code
+and dependencies, is much smaller, but requires a compatible .NET Runtime
+already installed on the target machine.
 
 ## Environment
 
@@ -69,7 +43,15 @@ CrossApp/
 ├── CrossApp.sln
 ├── README.md
 └── src/
+    ├── Core/
+    │   ├── Core.csproj
+    │   └── EnvironmentInfo.cs
     └── Cli/
         ├── Cli.csproj
         └── Program.cs
 ```
+
+- `Core/Dto/` — data transfer record types (week 3): `ProductDto`,
+  `BookDto`, `OrderDto`
+- `Core/Domain/` — entities with behavior and invariants (week 4)
+- `Core/Storage/` — storage implementations (week 5)
