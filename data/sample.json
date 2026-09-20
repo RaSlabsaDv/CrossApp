@@ -1,0 +1,4 @@
+[
+  { "id": "P-001", "sku": "SKU-001", "name": "Wireless Mouse", "price": 450.00, "quantity": 35 },
+  { "id": "P-002", "sku": "SKU-002", "name": "Mechanical Keyboard", "price": 1200.50, "quantity": 18 }
+]
