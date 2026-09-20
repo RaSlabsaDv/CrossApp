@@ -23,6 +23,12 @@ dotnet run --project src/Cli
 | win-x64 | self-contained | 77M | no |
 | win-x64 | framework-dependent | 212K | yes (.NET 10) |
 
+#### Self-contained publish bundles the entire .NET runtime together with the application code, so it takes up significantly more space, but it doesn't require .NET to be installed on the target machine — it can run out of the box.
+
+#### Framework-dependent publish contains only the application's own code and dependencies, making it much smaller, but it requires a compatible .NET Runtime to already be installed on the user's machine.
+
+---
+
 #### Additional publish options Comparison
 
 | RID | Mode | Size publish | Runtime |
