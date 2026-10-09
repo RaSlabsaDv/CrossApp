@@ -6,5 +6,6 @@ public record OrderDto
     CustomerDto Customer,
     IReadOnlyList<ProductDto> Products,
     decimal TotalPrice,
-    bool IsConfirmed = false
+    bool IsConfirmed = false,
+    string? Status = null
 );

@@ -5,13 +5,14 @@ namespace Core.Domain;
 public sealed class Order
 {
     private readonly List<OrderLine> _lines = [];
-    private bool _isConfirmed;
+    private OrderStatus _status = OrderStatus.Draft;
 
     public string Id { get; }
     public CustomerDto Customer { get; }
     public string CustomerId => Customer.Id;
     public IReadOnlyList<OrderLine> Lines => _lines.AsReadOnly();
-    public bool IsConfirmed => _isConfirmed;
+    public OrderStatus Status => _status;
+    public bool IsConfirmed => Status == OrderStatus.Confirmed;
     public decimal Total => _lines.Sum(line => line.Total);
 
     private Order(string id, CustomerDto customer)
@@ -44,18 +45,12 @@ public sealed class Order
         AddValidatedLine(line);
     }
 
-    public void Confirm()
-    {
-        EnsureDraft();
-        if (_lines.Count == 0)
-            throw new InvalidOperationException(
-                $"Cannot confirm empty order {Id}");
+    public void Confirm() => ChangeStatus(OrderStatus.Confirmed);
 
-        _isConfirmed = true;
-    }
+    public void Cancel() => ChangeStatus(OrderStatus.Cancelled);
 
     public OrderDto ToDto() => new(Id, Customer,
-        _lines.Select(line => line.ToDto()).ToArray(), Total, IsConfirmed);
+        _lines.Select(line => line.ToDto()).ToArray(), Total, IsConfirmed, Status.ToString());
 
     public static Order FromDto(OrderDto dto)
     {
@@ -70,17 +65,47 @@ public sealed class Order
             throw new ArgumentException(
                 $"Order {order.Id} DTO total ({dto.TotalPrice}) does not match the sum of its lines ({order.Total})",
                 nameof(dto));
-        if (dto.IsConfirmed)
+        OrderStatus status = dto.Status switch
+        {
+            null => dto.IsConfirmed ? OrderStatus.Confirmed : OrderStatus.Draft,
+            "Draft" => OrderStatus.Draft,
+            "Confirmed" => OrderStatus.Confirmed,
+            "Cancelled" => OrderStatus.Cancelled,
+            _ => throw new ArgumentException($"Unknown order status: {dto.Status}", nameof(dto))
+        };
+        if (dto.Status is not null && dto.IsConfirmed != (status == OrderStatus.Confirmed))
+            throw new ArgumentException("Order DTO status conflicts with IsConfirmed", nameof(dto));
+        if (status == OrderStatus.Confirmed)
             order.Confirm();
+        else if (status == OrderStatus.Cancelled)
+            order.Cancel();
 
         return order;
     }
 
     private void EnsureDraft()
     {
-        if (_isConfirmed)
+        if (Status != OrderStatus.Draft)
             throw new InvalidOperationException(
-                $"Order {Id} is already confirmed and cannot be modified or confirmed again");
+                $"Order {Id} has status {Status}; only draft orders can be modified");
+    }
+
+    private void ChangeStatus(OrderStatus nextStatus)
+    {
+        bool allowed = (Status, nextStatus) switch
+        {
+            (OrderStatus.Draft, OrderStatus.Confirmed) => true,
+            (OrderStatus.Draft, OrderStatus.Cancelled) => true,
+            (OrderStatus.Confirmed, OrderStatus.Cancelled) => true,
+            _ => false
+        };
+        if (!allowed)
+            throw new InvalidOperationException(
+                $"Order {Id} cannot transition from {Status} to {nextStatus}");
+        if (nextStatus == OrderStatus.Confirmed && _lines.Count == 0)
+            throw new InvalidOperationException($"Cannot confirm empty order {Id}");
+
+        _status = nextStatus;
     }
 
     private void AddValidatedLine(OrderLine line)

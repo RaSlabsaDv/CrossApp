@@ -1,9 +1,12 @@
 ﻿using Core.Dto;
 using Core.Domain;
 using Core.Import;
+using Core.Services;
 
 if (args is ["--demo"])
     return RunDomainDemo();
+if (args is ["--extras-demo"])
+    return RunExtraDemo();
 
 string path = args.Length > 0 ? args[0] : Path.Combine("../../data", "sample.csv");
 
@@ -36,6 +39,11 @@ int total = result.Items.Count + result.Errors.Count;
 double errorRate = total == 0 ? 0 : (double)result.Errors.Count / total * 100;
 
 Console.WriteLine($"Усього: {total}, прийнято: {result.Items.Count}, пропущено: {result.Errors.Count}, помилок: {errorRate:F1}%");
+
+ImportResult<OrderLine> domainResult = DomainImporter.ToOrderLines(result);
+Console.WriteLine($"Доменних рядків: {domainResult.Items.Count}, помилок імпорту та інваріантів: {domainResult.Errors.Count}");
+foreach (string error in domainResult.Errors.Skip(result.Errors.Count))
+    Console.WriteLine($"  ! {error}");
 
 return 0;
 
@@ -76,8 +84,72 @@ static int RunDomainDemo()
     return passed && unchanged ? 0 : 1;
 }
 
+static int RunExtraDemo()
+{
+    Console.WriteLine("=== Додаткове 1: імпорт DTO у сутності ===");
+    ImportResult<ProductDto> products = new(
+        new ProductDto[]
+        {
+            new("P-001", "SKU-001", "Клавіатура", 1200m, 2),
+            new("P-002", "SKU-002", "Миша", 450m, 0),
+            new("P-003", "SKU-003", "Кабель", -90m, 1)
+        },
+        new[] { "Line 5: invalid CSV format" });
+    ImportResult<OrderLine> lines = DomainImporter.ToOrderLines(products);
+    Console.WriteLine($"Створено рядків: {lines.Items.Count}, помилок: {lines.Errors.Count}");
+    foreach (string error in lines.Errors)
+        Console.WriteLine($"  ! {error}");
+    bool passed = lines.Items.Count == 1 && lines.Errors.Count == 3;
+
+    CustomerDto customer = new("C-001", "Олена", "olena@example.com");
+    Console.WriteLine();
+    Console.WriteLine("=== Додаткове 2: ліміт замовлень клієнта ===");
+    List<Order> orders = [];
+    for (int index = 1; index <= OrderService.MaxConfirmedOrdersPerCustomer; index++)
+    {
+        Order existing = Order.Create($"ORD-{index:D3}", customer);
+        existing.AddLine("P-001", "Клавіатура", 1200m, 1);
+        OrderService.Confirm(existing, orders);
+        orders.Add(existing);
+    }
+    Order next = Order.Create("ORD-006", customer);
+    next.AddLine("P-002", "Миша", 450m, 1);
+    passed &= TryDo("шосте підтверджене замовлення", () => OrderService.Confirm(next, orders));
+    passed &= next.Status == OrderStatus.Draft;
+    PrintOrder(next);
+    orders[0].Cancel();
+    OrderService.Confirm(next, orders);
+    Console.WriteLine("Після скасування одного замовлення підтвердження дозволено:");
+    PrintOrder(next);
+    passed &= next.IsConfirmed;
+
+    Console.WriteLine();
+    Console.WriteLine("=== Додаткове 3: стани замовлення ===");
+    next.Cancel();
+    PrintOrder(next);
+    passed &= TryDo("підтвердження скасованого замовлення", () => next.Confirm());
+    passed &= TryDo("повторне скасування", () => next.Cancel());
+    passed &= TryDo("зміна скасованого замовлення", () => next.AddLine("P-003", "Кабель", 90m, 1));
+    Order restored = Order.FromDto(next.ToDto());
+    Console.WriteLine("Скасоване замовлення після відновлення DTO:");
+    PrintOrder(restored);
+    passed &= restored.Status == OrderStatus.Cancelled && restored.Total == next.Total;
+    Order empty = Order.Create("ORD-007", customer);
+    empty.Cancel();
+    PrintOrder(empty);
+    passed &= empty.Status == OrderStatus.Cancelled;
+
+    ImportResult<Order> importedOrders = DomainImporter.ToOrders(new ImportResult<OrderDto>(
+        new[] { next.ToDto(), next.ToDto() with { TotalPrice = -1m } }, Array.Empty<string>()));
+    Console.WriteLine($"Імпорт замовлень: створено {importedOrders.Items.Count}, помилок {importedOrders.Errors.Count}");
+    foreach (string error in importedOrders.Errors)
+        Console.WriteLine($"  ! {error}");
+    passed &= importedOrders.Items.Count == 1 && importedOrders.Errors.Count == 1;
+    return passed ? 0 : 1;
+}
+
 static void PrintOrder(Order order) => Console.WriteLine(
-    $"{order.Id}: рядків = {order.Lines.Count}, сума = {order.Total:F2}, підтверджено = {order.IsConfirmed}");
+    $"{order.Id}: рядків = {order.Lines.Count}, сума = {order.Total:F2}, стан = {order.Status}");
 
 static bool TryDo(string title, Action action)
 {
