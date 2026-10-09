@@ -11,7 +11,8 @@
 
 ```bash
 dotnet build
-dotnet run --project src/Cli
+dotnet run --project src/Cli -f net10.0 -- --demo
+dotnet run --project src/Cli -f net10.0 -- data/sample.csv
 ```
 
 #### Publish Size Comparison
@@ -71,18 +72,90 @@ conditional compilation works per-TFM.
 CrossApp/
 ├── .git/
 ├── .gitignore
-├── CrossApp.sln
+├── CrossApp.slnx
 ├── README.md
 └── src/
     ├── Core/
     │   ├── Core.csproj
-    │   └── EnvironmentInfo.cs
+    │   ├── EnvironmentInfo.cs
+    │   ├── Dto/
+    │   ├── Import/
+    │   └── Domain/
+    │       ├── Order.cs
+    │       └── OrderLine.cs
     └── Cli/
         ├── Cli.csproj
         └── Program.cs
 ```
 
 - `Core/Dto/` — data transfer record types (week 3): `ProductDto`,
-  `BookDto`, `OrderDto`
+  `CustomerDto`, `OrderDto`, `ImportResult<T>`
 - `Core/Domain/` — entities with behavior and invariants (week 4)
-- `Core/Storage/` — storage implementations (week 5)
+
+## Lab 04: Orders domain
+
+`Order` owns a collection of immutable `OrderLine` entities. Both types have
+private constructors and validated `Create` factories. `AddLine` and `Confirm`
+are the only operations that change an order. `Lines` exposes a read-only
+wrapper, so callers cannot modify the internal list.
+
+### Invariants
+
+- Order ID and customer ID, name and email must not be blank (`ArgumentException`).
+- Customer, DTO, DTO products collection and individual product DTOs must not be null (`ArgumentNullException`).
+- Product ID, name and SKU must not be blank (`ArgumentException`). When creating a line without a separate SKU, its product ID is used as the SKU.
+- Line quantity must be greater than zero (`ArgumentOutOfRangeException`).
+- Product price must be non-negative (`ArgumentOutOfRangeException`); zero is allowed.
+- Line totals must fit within `decimal` (`ArgumentOutOfRangeException`); adding a line must not overflow the order total (`InvalidOperationException`).
+- An empty order cannot be confirmed (`InvalidOperationException`).
+- A confirmed order cannot accept new lines or be confirmed again (`InvalidOperationException`).
+- The total stored in an order DTO must equal the sum of its lines (`ArgumentException`).
+
+Checks run before state changes. Exception messages are written in English.
+`FromDto` restores an order through the same factories and domain checks,
+including `Confirm` for a confirmed order.
+
+### DTO mapping
+
+The week 3 records remain data transfer types. `OrderLine.ToDto` maps a line to
+`ProductDto`, preserving SKU and note. `Order.ToDto` preserves the customer,
+products, calculated total and confirmation state. `OrderDto.IsConfirmed`
+defaults to `false` for compatibility with older data that has no such field.
+DTOs carry data; domain entities enforce business rules.
+
+### CLI demonstration
+
+From the `CrossApp` directory, run:
+
+```bash
+dotnet run --project src/Cli -f net10.0 -- --demo
+# Alternatively, select the other supported framework:
+dotnet run --project src/Cli -f net9.0 -- --demo
+```
+
+The success scenario creates an order, adds two lines, confirms it and restores
+it through DTO mapping. Its total is `2850.00`.
+The failure scenario demonstrates invalid input, empty-order confirmation,
+changes after confirmation, repeated confirmation and a mismatched DTO total.
+Each expected exception is caught and printed as its type and `Message`, without
+a stack trace. The final output verifies that rejected operations left both
+orders unchanged. The demonstration exits with code 1 if an expected rejection
+does not occur or the checked state changes.
+
+The existing CSV/JSON import is available by passing a file path:
+
+```bash
+dotnet run --project src/Cli -f net10.0 -- data/sample.csv
+dotnet run --project src/Cli -f net10.0 -- data/sample.json
+```
+
+### Domain independence
+
+`Core/Domain` depends on DTOs and standard in-memory types. It contains no console,
+file I/O or CLI dependencies. Check this from `CrossApp`:
+
+```bash
+rg -n 'Console\.|File\.|System\.IO|Core\.Import|\bCli\b' src/Core/Domain
+```
+
+No matches are expected (ripgrep exits with code 1 when no match is found).
