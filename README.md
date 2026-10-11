@@ -1,5 +1,57 @@
 # CrossApp
 
+## Lab 06: Domain events, delegates and lambdas
+
+The order domain follows the lab's order variant. `OrderChangeKind` describes
+creation, line addition, confirmation, cancellation and removal.
+`OrderChangedEventArgs` carries `OrderId`, `LinesCount`, `Total`, `Status` and `At`.
+`OrderService.Changed` is an `event EventHandler<OrderChangedEventArgs>`.
+Every successful service mutation raises it once, after persistence succeeds.
+Failed invariants, failed writes and removal of an absent order raise no event.
+Removal arguments describe the last state of the deleted order.
+
+Run the seven-step demonstration from `CrossApp`:
+
+```bash
+dotnet build -m:1 -p:BuildInParallel=false
+dotnet run --no-build --project src/Cli -f net10.0 -- --events-demo
+dotnet run --no-build --project src/Cli -f net9.0 -- --events-demo
+dotnet run --no-build --project src/Cli -f net10.0 -- --events-demo --file --path /tmp/lab06-orders.json
+dotnet run --no-build --project src/Cli -f net10.0 -- --events-demo --factory --cache
+```
+
+The first subscriber is a local method writing to the console and
+`Path.Combine(AppContext.BaseDirectory, "logs", "app.log")`; the directory is
+created by the CLI. The second is a stored lambda capturing `changes`.
+The demo verifies their subscription order. Creation, two lines and confirmation
+produce four notifications. After the first subscriber is removed, cancellation
+changes the stored status and increments the lambda counter to five while the
+log still contains four new lines. Both handlers are then attached again for
+the failure scenarios: negative quantity, missing ID and empty confirmation
+emit no events. `FindAll(order => order.Total < 1000m)` demonstrates `Func`.
+The temporary draft is removed at the end; its creation and removal add two
+further log entries. Log files append across runs; each run adds six entries.
+The created cancelled order remains in the selected store.
+
+The CLI catches file I/O errors inside the subscriber, reports them and returns
+a failed self-check without throwing back into an already completed mutation.
+Events are synchronous: an uncaught subscriber exception would interrupt the
+remaining handlers after the state was persisted. The service has no console
+or log-file dependency. Existing `Search` delegates to `FindAll`.
+
+Package-free checks cover all event kinds, arguments, persisted state visible
+to subscribers, handler order, no subscribers, unsubscription, failed invariants,
+failed persistence, missing removal and memory/file/cache stores:
+
+```bash
+dotnet run --no-build --project tests/Lab06Checks -f net10.0
+dotnet run --no-build --project tests/Lab06Checks -f net9.0
+rg -n 'Console|logs' src/Core
+```
+
+The search should return no matches. The step-by-step Ukrainian report,
+actual console output and four sample log entries are in [docs/lab06.md](docs/lab06.md).
+
 ## Getting Started
 
 ### Prerequisites
@@ -356,19 +408,3 @@ dotnet run --project src/Cli -f net10.0 -- --file --path data/orders.json
 
 The lab 04 modes use their own objects and never write to the lab 05 data file.
 CSV/JSON import remains available by passing a single input file path.
-
-### Checks
-
-The package-free checks in `tests/Lab05Checks` verify the shared store contract,
-detached reads, service invariants, persistence and reload, invalid-file handling,
-failed-write behavior, cache hits/invalidation and factory options:
-
-```bash
-dotnet run --project tests/Lab05Checks -f net10.0
-dotnet run --project tests/Lab05Checks -f net9.0
-rg -n 'Console\.|File\.|System\.IO' src/Core/Domain src/Core/Services
-rg -n 'FileOrderStore|InMemoryOrderStore|CachingOrderStore' src/Core/Services
-```
-
-Both searches should return no matches. Tests use temporary directories and
-clean them up without touching demonstration data.

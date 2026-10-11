@@ -3,6 +3,7 @@ using Cli;
 using Core;
 using Core.Abstractions;
 using Core.Domain;
+using Core.Events;
 using Core.Import;
 using Core.Services;
 using Core.Storage;
@@ -24,6 +25,8 @@ static int Run(string[] args)
         return RunDomainDemo();
     if (args is ["--extras-demo"])
         return RunExtraDemo();
+    if (args.Length > 0 && args[0] == "--events-demo")
+        return RunEventsDemo(args[1..]);
 
     if (args.Length == 0 || args[0].StartsWith("--"))
         return RunStorageDemo(args);
@@ -141,6 +144,99 @@ static int RunStorageDemo(string[] args)
     int finalCount = service.All().Count;
     Console.WriteLine($"Записів після операцій: {finalCount}");
     passed &= finalCount == initialCount + 1 && found.IsConfirmed && found.Total == 2850m;
+    return passed ? 0 : 1;
+}
+
+static int RunEventsDemo(string[] args)
+{
+    IOrderStore store = StoreFactory.Create(args);
+    OrderService service = new(store);
+    string logPath = Path.Combine(AppContext.BaseDirectory, "logs", "app.log");
+    Directory.CreateDirectory(Path.GetDirectoryName(logPath)!);
+    int changes = 0;
+    int loggedChanges = 0;
+    int unloggedChanges = 0;
+    bool subscriptionOrderCorrect = true;
+    bool loggingSucceeded = true;
+    Console.WriteLine($"Сховище: {store.GetType().Name}");
+    Console.WriteLine($"Журнал: {logPath}");
+
+    // Крок 3: перший підписник — локальний метод, консоль і файл.
+    void OnOrderChanged(object? sender, OrderChangedEventArgs e)
+    {
+        subscriptionOrderCorrect &= ReferenceEquals(sender, service) && changes == loggedChanges + unloggedChanges;
+        string line = $"{e.At:HH:mm:ss} {e.Kind,-16} {e.OrderId} → рядків {e.LinesCount}, сума {e.Total:F2}, стан {e.Status}";
+        Console.WriteLine(line);
+        try
+        {
+            File.AppendAllText(logPath, line + Environment.NewLine);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            loggingSucceeded = false;
+            Console.WriteLine($"Помилка журналу: {ex.Message}");
+        }
+        loggedChanges++;
+    }
+    service.Changed += OnOrderChanged;
+
+    // Крок 4: другий підписник захоплює локальний лічильник.
+    EventHandler<OrderChangedEventArgs> countChanges = (_, _) => changes++;
+    service.Changed += countChanges;
+    bool passed;
+    try
+    {
+        Console.WriteLine("Крок 5: створення, два рядки, підтвердження.");
+        CustomerDto customer = new($"LAB06-{Guid.NewGuid():N}", "Олена", "olena@example.com");
+        Order created = service.CreateOrder(customer);
+        service.AddLine(created.Id, "P-001", "Клавіатура", 1200m, 2);
+        service.AddLine(created.Id, "P-002", "Миша", 450m, 1);
+        service.Confirm(created.Id);
+        Console.WriteLine($"Подій отримано: {changes}; рядків журналу за цей запуск: {loggedChanges}");
+        Console.WriteLine($"Порядок: обробник консолі й файлу → лямбда-лічильник: {subscriptionOrderCorrect}");
+        passed = changes == 4 && loggedChanges == 4 && subscriptionOrderCorrect && loggingSucceeded;
+
+        service.Changed -= OnOrderChanged;
+        service.Cancel(created.Id);
+        unloggedChanges++;
+        Console.WriteLine("Після відписки: скасування виконано без рядка події у консолі та файлі.");
+        PrintOrder(service.Find(created.Id)!);
+        Console.WriteLine($"Подій отримано: {changes}; рядків журналу за цей запуск: {loggedChanges}");
+        passed &= changes == 5 && loggedChanges == 4 && service.Find(created.Id)!.Status == OrderStatus.Cancelled;
+
+        // Крок 6: підписуємо назад, щоб відсутність події при відмові була видимою.
+        service.Changed -= countChanges;
+        service.Changed += OnOrderChanged;
+        service.Changed += countChanges;
+        Console.WriteLine("Крок 6: відмови — обидва підписники активні.");
+        Order draft = service.CreateOrder(customer);
+        int beforeFailure = changes;
+        int loggedBeforeFailure = loggedChanges;
+        passed &= TryDo("від'ємна кількість", () => service.AddLine(draft.Id, "P-003", "Кабель", 90m, -1));
+        passed &= TryDo("неіснуючий ID", () => service.Confirm($"MISSING-{Guid.NewGuid():N}"));
+        passed &= TryDo("підтвердження порожнього замовлення", () => service.Confirm(draft.Id));
+        bool noFailureEvents = changes == beforeFailure && loggedChanges == loggedBeforeFailure;
+        Console.WriteLine($"Подій від невдалих операцій: {changes - beforeFailure}; стан чернетки незмінний: {service.Find(draft.Id)!.Lines.Count == 0}");
+        passed &= noFailureEvents && service.Find(draft.Id)!.Lines.Count == 0;
+
+        Console.WriteLine("Крок 7: FindAll(order => order.Total < 1000m):");
+        IReadOnlyList<Order> matches = service.FindAll(order => order.Total < 1000m);
+        foreach (Order order in matches)
+            PrintOrder(order);
+        passed &= matches.Any(order => order.Id == draft.Id) && matches.All(order => order.Total < 1000m);
+
+        // Прибирання тимчасової чернетки також є успішною доменною зміною.
+        passed &= service.Remove(draft.Id);
+        int beforeMissingRemove = changes;
+        passed &= !service.Remove(draft.Id) && changes == beforeMissingRemove;
+    }
+    finally
+    {
+        service.Changed -= OnOrderChanged;
+        service.Changed -= countChanges;
+    }
+    passed &= loggingSucceeded && subscriptionOrderCorrect;
+    Console.WriteLine(passed ? "Самоперевірка лабораторної 6: успішно." : "Самоперевірка лабораторної 6: помилка.");
     return passed ? 0 : 1;
 }
 

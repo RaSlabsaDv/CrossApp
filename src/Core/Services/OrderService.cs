@@ -1,6 +1,7 @@
 using Core.Abstractions;
 using Core.Domain;
 using Core.Dto;
+using Core.Events;
 
 namespace Core.Services;
 
@@ -10,6 +11,8 @@ public sealed class OrderService
 
     private readonly IOrderStore _store;
 
+    public event EventHandler<OrderChangedEventArgs>? Changed;
+
     public OrderService(IOrderStore store) =>
         _store = store ?? throw new ArgumentNullException(nameof(store));
 
@@ -17,6 +20,7 @@ public sealed class OrderService
     {
         Order order = Order.Create(id ?? $"ORD-{Guid.NewGuid():N}", customer);
         _store.Add(order);
+        OnChanged(order, OrderChangeKind.OrderCreated);
         return order;
     }
 
@@ -26,6 +30,7 @@ public sealed class OrderService
         Order order = RequireOrder(id);
         order.AddLine(productId, name, price, quantity, sku, note);
         _store.Update(order);
+        OnChanged(order, OrderChangeKind.LineAdded);
     }
 
     public void Confirm(string id)
@@ -43,6 +48,7 @@ public sealed class OrderService
 
         order.Confirm();
         _store.Update(order);
+        OnChanged(order, OrderChangeKind.OrderConfirmed);
     }
 
     public void Cancel(string id)
@@ -50,17 +56,35 @@ public sealed class OrderService
         Order order = RequireOrder(id);
         order.Cancel();
         _store.Update(order);
+        OnChanged(order, OrderChangeKind.OrderCancelled);
     }
 
     public IReadOnlyList<Order> All() => _store.List();
     public Order? Find(string id) => _store.GetById(id);
-    public bool Remove(string id) => _store.Remove(id);
+    public bool Remove(string id)
+    {
+        Order? order = _store.GetById(id);
+        if (order is null || !_store.Remove(id))
+            return false;
 
-    public IReadOnlyList<Order> Search(Func<Order, bool> predicate)
+        OnChanged(order, OrderChangeKind.OrderRemoved);
+        return true;
+    }
+
+    public IReadOnlyList<Order> FindAll(Func<Order, bool> predicate)
     {
         ArgumentNullException.ThrowIfNull(predicate);
         return _store.List().Where(predicate).ToList().AsReadOnly();
     }
+
+    public IReadOnlyList<Order> Search(Func<Order, bool> predicate)
+    {
+        return FindAll(predicate);
+    }
+
+    private void OnChanged(Order order, OrderChangeKind kind) =>
+        Changed?.Invoke(this, new OrderChangedEventArgs(
+            order.Id, kind, order.Lines.Count, order.Total, order.Status));
 
     private Order RequireOrder(string id) => _store.GetById(id)
         ?? throw new InvalidOperationException($"Order with ID {id} does not exist");
