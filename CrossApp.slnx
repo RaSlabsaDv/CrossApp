@@ -3,4 +3,5 @@
     <Project Path="src/Cli/Cli.csproj" />
     <Project Path="src/Core/Core.csproj" />
   </Folder>
+  <Folder Name="/tests/" />
 </Solution>

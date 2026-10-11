@@ -11,6 +11,7 @@
 
 ```bash
 dotnet build
+dotnet run --project src/Cli -f net10.0
 dotnet run --project src/Cli -f net10.0 -- --demo
 dotnet run --project src/Cli -f net10.0 -- data/sample.csv
 ```
@@ -80,12 +81,17 @@ CrossApp/
     │   ├── EnvironmentInfo.cs
     │   ├── Dto/
     │   ├── Import/
+    │   ├── Abstractions/IOrderStore.cs
+    │   ├── Storage/
+    │   ├── Services/OrderService.cs
+    │   ├── SampleData.cs
     │   └── Domain/
     │       ├── Order.cs
     │       └── OrderLine.cs
     └── Cli/
         ├── Cli.csproj
-        └── Program.cs
+        ├── Program.cs
+        └── StoreFactory.cs
 ```
 
 - `Core/Dto/` — data transfer record types (week 3): `ProductDto`,
@@ -190,10 +196,9 @@ to that customer; draft and cancelled orders do not count. When the limit is
 reached, it throws `InvalidOperationException` without changing the new order.
 
 The rule belongs in a service because one `Order` does not know the customer's
-other orders. The caller supplies the full current collection of relevant
-orders. The service checks the cross-order rule and then calls `Order.Confirm`,
-which checks the order's own invariants. A future repository-backed service
-will obtain that collection from storage. This in-memory example assumes
+other orders. The service obtains the customer's orders through `IOrderStore`,
+checks the cross-order rule and then calls `Order.Confirm`, which checks the
+order's own invariants. This example assumes
 sequential operations; it does not coordinate concurrent confirmations.
 
 ### 3. Explicit order states
@@ -223,3 +228,147 @@ The demonstration shows partial import with errors, rejection of a sixth
 confirmed order, confirmation after another order is cancelled, allowed and
 forbidden state transitions, and DTO restoration of a cancelled order.
 It exits with code 1 if the checked behavior is incorrect.
+
+## Lab 05: Service layer, storage and manual DI
+
+### Contract and implementations
+
+`Core/Abstractions/IOrderStore` is the storage contract:
+
+| Method | Purpose |
+|---|---|
+| `List()` | Return a read-only list of orders with their lines |
+| `GetById(id)` | Find an aggregate; return `null` when absent |
+| `Add(order)` | Store a new aggregate; reject duplicate IDs |
+| `Update(order)` | Replace an existing aggregate; reject an absent ID |
+| `Remove(id)` | Delete an aggregate; return whether it existed |
+
+IDs are trimmed and compared using `OrdinalIgnoreCase`. Both implementations
+store snapshots and return detached entities, so editing an object returned by
+`GetById` or `List` does not persist changes until `Update` is called.
+
+- `InMemoryOrderStore`: a dictionary populated through an optional seed
+  constructor. The CLI seeds 18 orders from `SampleData.Orders()`. Each new
+  process starts with the same sample orders; user-created orders are lost.
+- `FileOrderStore`: loads JSON on first access and keeps an in-memory cache.
+  Each successful `Add`, `Update` or `Remove` persists the whole aggregate list
+  as `OrderDto` records. Loading uses `Order.FromDto`, so invalid stored data
+  cannot bypass domain rules. Writes use a temporary file in the same directory
+  followed by replacement; the cache changes only after a successful write.
+  A missing file starts an empty store. Duplicate IDs and malformed data are
+  rejected rather than silently discarded.
+
+The default file path is `data/orders.json` under `AppContext.BaseDirectory`,
+normally `src/Cli/bin/Debug/net10.0/data/orders.json` when running .NET 10.
+The CLI prints the absolute path. To share a stable file across frameworks,
+pass `--file --path data/orders.json` from the project directory.
+Existing sample CSV/JSON files are import inputs, not order-store files.
+
+### Service and composition root
+
+`OrderService` receives only `IOrderStore` through its constructor. Its business
+operations are `CreateOrder`, `AddLine`, `Confirm` and `Cancel`. It also exposes
+`All`, `Find`, `Remove` and predicate-based `Search`. Each mutation calls the
+domain method and then persists the result. The five-confirmed-orders rule
+from lab 04 now queries the injected store.
+
+The main composition root is in `Program.cs`:
+
+```csharp
+IOrderStore store = options.UseFile
+    ? new FileOrderStore(options.DataPath)
+    : new InMemoryOrderStore(SampleData.Orders());
+if (options.UseCache)
+    store = new CachingOrderStore(store);
+OrderService service = new(store);
+```
+
+Dependencies: `Cli -> OrderService -> IOrderStore`, with either
+`InMemoryOrderStore` or `FileOrderStore` implementing the contract.
+The service does not create concrete stores and has no console or file I/O.
+No `Microsoft.Extensions.DependencyInjection` package or DI container is used.
+When a database implementation is added later, it will implement `IOrderStore`
+and be selected in the composition root. Domain entities and service business
+operations will not need to depend on that implementation.
+
+### Demonstration
+
+Run from `CrossApp`; choose `-f net9.0` instead if needed:
+
+```bash
+# In-memory store: each run starts with 18 sample orders and ends with 19.
+dotnet run --project src/Cli -f net10.0
+dotnet run --project src/Cli -f net10.0
+
+# File store: the second run sees the first run's order and adds one more.
+dotnet run --project src/Cli -f net10.0 -- --file --path data/orders.json
+dotnet run --project src/Cli -f net10.0 -- --file --path data/orders.json
+```
+
+The scenario prints the chosen store and initial record count, creates an order,
+adds two lines, confirms it, finds it by ID and lists orders. It also searches
+confirmed orders with totals of at least 1000, demonstrates duplicate and
+missing-ID failures, and creates/removes a temporary order. The final count
+must be the initial count plus one. A unique demo customer is used on each run
+so repeated file demonstrations do not hit the customer's five-order limit.
+The JSON file contains all order fields and lines, including status and notes.
+Expected failures print only exception type and `Message` in English.
+
+### Optional tasks
+
+1. `CachingOrderStore` is a decorator receiving another `IOrderStore` through
+   its constructor. It caches list and ID lookups, including absent IDs.
+   Successful writes invalidate both caches. Returned objects are detached.
+   `CacheHits` and `CacheMisses` make repeated reads visible in the CLI.
+2. `OrderService.Search(Func<Order, bool> predicate)` supports arbitrary filters
+   without adding file-specific operations to the storage contract. The CLI
+   demonstrates `order => order.IsConfirmed && order.Total >= 1000m`.
+3. `Cli/StoreFactory.Create(args)` creates the same store configuration when
+   `--factory` is supplied. This moves construction and optional decoration
+   into a dedicated CLI factory; the default path keeps the explicit ternary
+   choice in `Program.cs`. Both use manual constructor injection. The factory
+   is part of the CLI composition root, not a dependency of `OrderService`.
+
+```bash
+# Decorator and predicate search
+dotnet run --project src/Cli -f net10.0 -- --cache
+
+# Factory with memory storage
+dotnet run --project src/Cli -f net10.0 -- --factory --cache
+
+# Factory with file storage and caching
+dotnet run --project src/Cli -f net10.0 -- --factory --file --cache --path data/orders.json
+```
+
+Storage instances are intended for sequential use by one CLI process.
+File caches do not monitor external writes; the decorator assumes all changes
+go through it. Concurrent processes or database transactions are outside this
+lab's implementation.
+
+### Show lab 04 followed by lab 05
+
+```bash
+dotnet run --project src/Cli -f net10.0 -- --demo
+dotnet run --project src/Cli -f net10.0 -- --extras-demo
+dotnet run --project src/Cli -f net10.0
+dotnet run --project src/Cli -f net10.0 -- --file --path data/orders.json
+```
+
+The lab 04 modes use their own objects and never write to the lab 05 data file.
+CSV/JSON import remains available by passing a single input file path.
+
+### Checks
+
+The package-free checks in `tests/Lab05Checks` verify the shared store contract,
+detached reads, service invariants, persistence and reload, invalid-file handling,
+failed-write behavior, cache hits/invalidation and factory options:
+
+```bash
+dotnet run --project tests/Lab05Checks -f net10.0
+dotnet run --project tests/Lab05Checks -f net9.0
+rg -n 'Console\.|File\.|System\.IO' src/Core/Domain src/Core/Services
+rg -n 'FileOrderStore|InMemoryOrderStore|CachingOrderStore' src/Core/Services
+```
+
+Both searches should return no matches. Tests use temporary directories and
+clean them up without touching demonstration data.
