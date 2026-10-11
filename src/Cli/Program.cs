@@ -1,5 +1,6 @@
 ﻿using Core.Dto;
 using Cli;
+using Cli.Notifications;
 using Core;
 using Core.Abstractions;
 using Core.Domain;
@@ -27,6 +28,8 @@ static int Run(string[] args)
         return RunExtraDemo();
     if (args.Length > 0 && args[0] == "--events-demo")
         return RunEventsDemo(args[1..]);
+    if (args is ["--lab06-extras-demo"])
+        return RunLab06ExtrasDemo();
 
     if (args.Length == 0 || args[0].StartsWith("--"))
         return RunStorageDemo(args);
@@ -237,6 +240,78 @@ static int RunEventsDemo(string[] args)
     }
     passed &= loggingSucceeded && subscriptionOrderCorrect;
     Console.WriteLine(passed ? "Самоперевірка лабораторної 6: успішно." : "Самоперевірка лабораторної 6: помилка.");
+    return passed ? 0 : 1;
+}
+
+static int RunLab06ExtrasDemo()
+{
+    Console.WriteLine("Додаткове 1: INotificationSink і ручний DI.");
+    string logPath = Path.Combine(AppContext.BaseDirectory, "logs", "sinks.log");
+    INotificationSink sink = new CompositeNotificationSink(new ConsoleSink(), new FileSink(logPath));
+    IOrderStore store = new InMemoryOrderStore();
+    OrderService service = new(store, sink);
+    int linesBefore = File.Exists(logPath) ? File.ReadLines(logPath).Count() : 0;
+    int changes = 0;
+    EventHandler<OrderChangedEventArgs> counter = (_, _) => changes++;
+    service.Changed += counter;
+    bool passed;
+    try
+    {
+        Order created = service.CreateOrder(new CustomerDto("EXTRA-06", "Олена", "olena@example.com"));
+        service.AddLine(created.Id, "P-001", "Кабель", 90m, 2);
+        service.Confirm(created.Id);
+        passed = changes == 3 && File.ReadLines(logPath).Count() - linesBefore == 3;
+        service.Changed -= counter;
+        service.Cancel(created.Id);
+        Console.WriteLine($"Після -=: лічильник подій = {changes}; sink продовжив виведення і запис.");
+        passed &= changes == 3 && File.ReadLines(logPath).Count() - linesBefore == 4
+            && service.Find(created.Id)!.Status == OrderStatus.Cancelled;
+        int logBeforeFailure = File.ReadLines(logPath).Count();
+        passed &= TryDo("повторне скасування", () => service.Cancel(created.Id));
+        passed &= File.ReadLines(logPath).Count() == logBeforeFailure;
+    }
+    finally
+    {
+        service.Changed -= counter;
+    }
+    Console.WriteLine($"Журнал sink: {logPath}");
+
+    Console.WriteLine("Додаткове 2: Action<string> повідомляє про пропущені рядки CSV.");
+    string directory = Path.Combine(Path.GetTempPath(), $"lab06-import-{Guid.NewGuid():N}");
+    Directory.CreateDirectory(directory);
+    try
+    {
+        string path = Path.Combine(directory, "products.csv");
+        File.WriteAllLines(path, new[]
+        {
+            "id;sku;name;price;quantity",
+            "P-001;SKU-001;Кабель;90;2",
+            "P-002;;Миша;450;1",
+            "P-003;SKU-003;Хаб;not-a-price;1",
+            "P-004;SKU-004;Адаптер;100;-1"
+        });
+        List<string> skipped = [];
+        ImportResult<ProductDto> result = ProductCsvImporter.Load(path, message =>
+        {
+            skipped.Add(message);
+            Console.WriteLine($"Пропущено: {message}");
+        });
+        ImportResult<ProductDto> withoutCallback = ProductCsvImporter.Load(path);
+        Console.WriteLine($"Імпортовано: {result.Items.Count}; пропущено: {result.Errors.Count}; викликів Action: {skipped.Count}");
+        passed &= result.Items.Count == 1 && result.Errors.Count == 3
+            && skipped.SequenceEqual(result.Errors)
+            && withoutCallback.Items.SequenceEqual(result.Items)
+            && withoutCallback.Errors.SequenceEqual(result.Errors);
+    }
+    finally
+    {
+        Directory.Delete(directory, recursive: true);
+    }
+
+    Console.WriteLine("Додаткове 3: async-лямбда для EventHandler повертає void (async void).");
+    Console.WriteLine("Invoke не очікує завершення після await; виняток після await не ловиться try/catch навколо операції сервісу.");
+    Console.WriteLine("Письмове пояснення та приклад: звіт lab6, розділ додаткових завдань.");
+    Console.WriteLine(passed ? "Додаткові завдання лабораторної 6: успішно." : "Додаткові завдання лабораторної 6: помилка.");
     return passed ? 0 : 1;
 }
 

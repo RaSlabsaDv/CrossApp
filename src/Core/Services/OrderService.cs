@@ -10,11 +10,15 @@ public sealed class OrderService
     public const int MaxConfirmedOrdersPerCustomer = 5;
 
     private readonly IOrderStore _store;
+    private readonly INotificationSink? _notificationSink;
 
     public event EventHandler<OrderChangedEventArgs>? Changed;
 
-    public OrderService(IOrderStore store) =>
+    public OrderService(IOrderStore store, INotificationSink? notificationSink = null)
+    {
         _store = store ?? throw new ArgumentNullException(nameof(store));
+        _notificationSink = notificationSink;
+    }
 
     public Order CreateOrder(CustomerDto customer, string? id = null)
     {
@@ -82,9 +86,13 @@ public sealed class OrderService
         return FindAll(predicate);
     }
 
-    private void OnChanged(Order order, OrderChangeKind kind) =>
-        Changed?.Invoke(this, new OrderChangedEventArgs(
-            order.Id, kind, order.Lines.Count, order.Total, order.Status));
+    private void OnChanged(Order order, OrderChangeKind kind)
+    {
+        var change = new OrderChangedEventArgs(
+            order.Id, kind, order.Lines.Count, order.Total, order.Status);
+        _notificationSink?.Notify(change);
+        Changed?.Invoke(this, change);
+    }
 
     private Order RequireOrder(string id) => _store.GetById(id)
         ?? throw new InvalidOperationException($"Order with ID {id} does not exist");

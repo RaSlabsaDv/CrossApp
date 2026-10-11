@@ -39,18 +39,47 @@ Events are synchronous: an uncaught subscriber exception would interrupt the
 remaining handlers after the state was persisted. The service has no console
 or log-file dependency. Existing `Search` delegates to `FindAll`.
 
-Package-free checks cover all event kinds, arguments, persisted state visible
-to subscribers, handler order, no subscribers, unsubscription, failed invariants,
-failed persistence, missing removal and memory/file/cache stores:
+The CLI demonstration checks counts, handler order, unsubscription, invariants
+and predicate search, and returns a nonzero exit code when a check fails:
 
 ```bash
-dotnet run --no-build --project tests/Lab06Checks -f net10.0
-dotnet run --no-build --project tests/Lab06Checks -f net9.0
+dotnet run --no-build --project src/Cli -f net10.0 -- --events-demo
 rg -n 'Console|logs' src/Core
 ```
 
 The search should return no matches. The step-by-step Ukrainian report,
-actual console output and four sample log entries are in [docs/lab06.md](docs/lab06.md).
+actual console output and sample log entries are in
+[../Reports/lab6/lab6.md](../Reports/lab6/lab6.md).
+
+### Optional tasks
+
+```bash
+dotnet run --no-build --project src/Cli -f net10.0 -- --lab06-extras-demo
+dotnet run --no-build --project src/Cli -f net9.0 -- --lab06-extras-demo
+```
+
+1. `Core/Abstractions/INotificationSink` exposes `Notify(OrderChangedEventArgs)`.
+   CLI implementations `ConsoleSink` and `FileSink` are combined through
+   `CompositeNotificationSink` and passed to `OrderService(store, sink)` by manual
+   constructor injection. The optional constructor argument defaults to `null`;
+   the original event demonstration uses only events. Both mechanisms run after
+   persistence; the sink runs before event handlers. Removing an event handler
+   leaves the injected sink active, which the demo verifies through four new
+   lines in `logs/sinks.log` and an event counter that stays at three.
+   Core knows the interface, while concrete console and file operations remain
+   in CLI. A throwing sink propagates its exception after persistence and prevents
+   event dispatch, just as an uncaught event-handler exception interrupts dispatch.
+2. `ProductCsvImporter.Load(path, Action<string>? onSkipped = null)` invokes the
+   callback once per invalid data row and also retains each error in `ImportResult`.
+   Headers, comments and blank rows are skipped without error notifications.
+   The demo imports one valid row, reports three invalid rows through a lambda
+   and checks that calls with and without a callback return the same results.
+   Callback exceptions propagate; callers control the callback implementation.
+3. The report explains why an async handler matching `EventHandler<T>` is
+   `async void`, why its completion cannot be awaited by `Invoke`, and why
+   exceptions must be handled inside it. It includes a guarded example and the
+   alternative of an explicitly awaited `Func<..., Task>`.
+   See [Microsoft's async return types documentation](https://learn.microsoft.com/en-us/dotnet/csharp/programming-guide/concepts/async/async-return-types).
 
 ## Getting Started
 
