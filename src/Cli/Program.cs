@@ -6,6 +6,7 @@ using Core.Abstractions;
 using Core.Domain;
 using Core.Events;
 using Core.Import;
+using Core.Reports;
 using Core.Services;
 using Core.Storage;
 
@@ -22,6 +23,8 @@ catch (Exception ex) when (ex is ArgumentException or InvalidOperationException
 
 static int Run(string[] args)
 {
+    if (ReportOptions.TryParse(args) is { } reportOptions)
+        return RunReport(reportOptions);
     if (args is ["--demo"])
         return RunDomainDemo();
     if (args is ["--extras-demo"])
@@ -37,6 +40,97 @@ static int Run(string[] args)
         throw new ArgumentException("Import mode requires exactly one file path", nameof(args));
 
     return RunImport(args[0]);
+}
+
+static int RunReport(ReportOptions options)
+{
+    // Only read from storage: generating a report does not mutate data or emit events.
+    var items = new OrderService(StoreFactory.Create(options.StoreArgs)).All();
+    switch (options.Command)
+    {
+        case "report-top":
+            PrintCustomers(ReportService.TopCustomers(items, options.Take));
+            break;
+        case "report-orders":
+            PrintReportOrders(ReportService.TopOrders(items, options.Take));
+            break;
+        case "report-high":
+            PrintReportOrders(ReportService.AboveTotal(items, options.Threshold));
+            break;
+        case "report-low":
+            PrintReportOrders(ReportService.BelowTotal(items, options.Threshold));
+            break;
+        case "report-groups":
+            PrintGroups(ReportService.ByStatus(items));
+            break;
+        case "report-sum":
+            var totals = ReportService.Totals(items);
+            Console.WriteLine($"Замовлень: {totals.Items}; сума: {totals.Total:F2}; середній чек: {totals.Average:F2}; максимум: {totals.Max:F2}");
+            break;
+        case "report-deferred":
+            var demo = ReportService.DemonstrateDeferred(items, options.Threshold);
+            Console.WriteLine($"Замовлень із сумою < {options.Threshold:F2} до змін: {demo.BeforeChange}");
+            Console.WriteLine($"Після додавання до локального списку: {demo.AfterChange}");
+            Console.WriteLine($"У DTO-знімку після очищення джерела: {demo.SnapshotCount}");
+            Console.WriteLine($"У повторно виконаному запиті після очищення: {demo.AfterClear}");
+            break;
+        case "report-join":
+            PrintCustomers(ReportService.CustomersWithOrders(SampleData.Customers(), items));
+            break;
+        case "report-query":
+            var queryGroups = ReportService.ByStatusQuery(items);
+            PrintGroups(queryGroups);
+            Console.WriteLine($"Результат збігається з методним синтаксисом: {queryGroups.SequenceEqual(ReportService.ByStatus(items))}");
+            break;
+        case "report-benchmark":
+            PrintBenchmark(ReportService.Benchmark(SampleData.BenchmarkOrders(), options.Threshold, options.Take));
+            break;
+        case "report-extras":
+            Console.WriteLine("GroupJoin: клієнти × замовлення, включно з клієнтом без замовлень:");
+            PrintCustomers(ReportService.CustomersWithOrders(SampleData.Customers(), items));
+            Console.WriteLine("TopBy у двох звітах — клієнти та замовлення:");
+            PrintCustomers(ReportService.TopCustomers(items, options.Take));
+            PrintReportOrders(ReportService.TopOrders(items, options.Take));
+            Console.WriteLine("Групування у синтаксисі запитів:");
+            PrintGroups(ReportService.ByStatusQuery(items));
+            PrintBenchmark(ReportService.Benchmark(SampleData.BenchmarkOrders(), options.Threshold, options.Take));
+            break;
+        default:
+            Console.WriteLine("report-top | report-orders | report-high | report-low | report-groups | report-sum | report-deferred | report-join | report-query | report-benchmark | report-extras");
+            return 1;
+    }
+    return 0;
+}
+
+static void PrintReportOrders(IReadOnlyList<OrderReportLine> lines)
+{
+    Console.WriteLine($"{"ID",-18} {"Клієнт",-20} {"Рядків",6} {"Сума",12} {"Статус",-12}");
+    foreach (var line in lines)
+        Console.WriteLine($"{line.OrderId,-18} {line.CustomerName,-20} {line.LinesCount,6} {line.Total,12:F2} {line.Status,-12}");
+    if (lines.Count == 0) Console.WriteLine("Немає замовлень за цим критерієм.");
+}
+
+static void PrintCustomers(IReadOnlyList<CustomerSummary> lines)
+{
+    Console.WriteLine($"{"ID",-12} {"Клієнт",-20} {"Замовлень",10} {"Сума",12}");
+    foreach (var line in lines)
+        Console.WriteLine($"{line.CustomerId,-12} {line.CustomerName,-20} {line.OrdersCount,10} {line.Total,12:F2}");
+    if (lines.Count == 0) Console.WriteLine("Немає клієнтів у результаті.");
+}
+
+static void PrintGroups(IReadOnlyList<GroupSummary> groups)
+{
+    Console.WriteLine($"{"Статус",-12} {"Замовлень",10} {"Сума",12}");
+    foreach (var group in groups)
+        Console.WriteLine($"{group.Key,-12} {group.Count,10} {group.Total,12:F2}");
+    if (groups.Count == 0) Console.WriteLine("Немає груп.");
+}
+
+static void PrintBenchmark(ReportBenchmark benchmark)
+{
+    Console.WriteLine($"Записів: {benchmark.Items}; повторів: {benchmark.Iterations}");
+    Console.WriteLine($"Без проміжного ToList: {benchmark.WithoutIntermediateListMs:F3} мс; із ToList: {benchmark.WithIntermediateListMs:F3} мс (середній час)");
+    Console.WriteLine($"Результати однакові: {benchmark.EqualResults}");
 }
 
 static int RunImport(string path)

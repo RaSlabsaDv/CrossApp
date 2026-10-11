@@ -1,5 +1,104 @@
 # CrossApp
 
+## Lab 07: LINQ reports
+
+Reports use the order variant of the lab: top customers by total order value,
+orders above a threshold, grouping by status, average order value and the
+largest order. `Core/Reports/ReportService` accepts `IEnumerable<Order>` and
+returns immutable record DTOs in materialized read-only lists. `Totals` returns
+an explicitly named tuple with decimal amounts. Reports include all statuses,
+including cancelled orders; totals describe this dataset, not paid revenue.
+All filtering, projection, grouping and sorting stay in Core. CLI only parses
+options, invokes reports and formats their results.
+
+Run from `CrossApp` (both `net9.0` and `net10.0` are supported):
+
+```bash
+dotnet build -m:1 -p:BuildInParallel=false
+dotnet run --no-build --project src/Cli -f net10.0 -- report-top
+dotnet run --no-build --project src/Cli -f net10.0 -- report-high --threshold 1000
+dotnet run --no-build --project src/Cli -f net10.0 -- report-groups
+dotnet run --no-build --project src/Cli -f net10.0 -- report-sum
+dotnet run --no-build --project src/Cli -f net10.0 -- report-low --threshold 1000
+dotnet run --no-build --project src/Cli -f net10.0 -- report-orders --take 5
+dotnet run --no-build --project src/Cli -f net10.0 -- report-deferred
+```
+
+| Command | Core method | Result |
+|---|---|---|
+| `report` / `report-top` | `TopCustomers` | Top N customers by sum, then unique customer ID |
+| `report-orders` | `TopOrders` | Top N orders by total, then unique order ID |
+| `report-high` | `AboveTotal` | Orders strictly above threshold, ascending amount and ID |
+| `report-low` | `BelowTotal` | Orders strictly below threshold, ascending amount and ID |
+| `report-groups` | `ByStatus` | Count and sum by status, descending sum and ordinal status name |
+| `report-sum` | `Totals` | Count, sum, average and maximum; zeros for empty input |
+| `report-deferred` | `DemonstrateDeferred` | Deferred query versus materialized DTO snapshot |
+
+The existing dataset already contains 18 orders, six customers and three
+statuses, so it meets this variant's prerequisite. With the default threshold
+of 1000, 11 orders are below it and six are above it; an order worth exactly
+1000 belongs to neither strict filter. Totals are 18 orders, 16800.00 overall,
+933.33 average and 2550.00 maximum. `SampleData.Customers()` also includes a
+seventh customer without orders for the optional `GroupJoin` example.
+Top reports use ordinal unique IDs to break ties independently of input order.
+
+Storage options can precede or follow the command. The parser consumes the
+value after `--path`, so a file path cannot be mistaken for a report command:
+
+```bash
+dotnet run --no-build --project src/Cli -f net10.0 -- --file --path /tmp/lab07-orders.json report-sum
+dotnet run --no-build --project src/Cli -f net10.0 -- report-top --factory --cache
+```
+
+A missing storage file represents an empty dataset: all report lists are empty,
+and `report-sum` prints four zeros. Report commands only read storage and never
+create orders or emit change events. `--take` accepts a nonnegative integer
+(default 5); `--threshold` accepts a nonnegative decimal using `.` (default 1000).
+The deferred demo requires a positive threshold. Invalid commands/options
+return exit code 1. Running without a report command preserves earlier modes.
+
+### Deferred execution
+
+Building `Where` stores a query; filtering begins at each `Count()` or `ToList()`.
+The demo copies the store snapshot to a local list, counts 11 matching orders,
+adds a zero-value draft, and counts again: the same query now returns 12.
+Projecting into DTOs and calling `ToList()` fixes a snapshot of 12 rows, which
+remains unchanged after the local source is cleared, while a new query count
+returns zero. Public report methods materialize results before returning them,
+so printing or reusing a report never repeats its query.
+
+### Optional tasks
+
+```bash
+dotnet run --no-build --project src/Cli -f net10.0 -- report-join
+dotnet run --no-build --project src/Cli -f net10.0 -- report-query
+dotnet run --no-build --project src/Cli -f net10.0 -- report-benchmark
+dotnet run --no-build --project src/Cli -f net10.0 -- --lab07-extras-demo
+```
+
+1. `CustomersWithOrders` uses `GroupJoin` between the supplied customer directory
+   and orders. It returns `CustomerSummary` DTOs and keeps customers with zero
+   matching orders, including `C-007`. `report-join` uses the sample directory;
+   orders for customer IDs outside that directory do not appear in this join.
+2. `ReportExtensions.TopBy<T>` implements descending ranking and ordinal ID
+   tie-breaking. Both `TopCustomers` and `TopOrders` use it before DTO results
+   are materialized. Negative N is rejected; zero returns an empty report.
+3. `ByStatusQuery` expresses grouping and projection through
+   `from ... group ... into ... select`, then applies the same explicit ordinal
+   sorting as the method form. Query syntax highlights groups; method syntax
+   makes filtering, sorting and `Take` easier to follow as a chain.
+   `report-query` also prints whether both results match.
+4. `Benchmark` measures the complete filter/top-N/projection on 100000 generated
+   orders with and without a `ToList` between filtering and sorting. Input
+   generation and the initial input snapshot are outside the measured section.
+   Both variants are warmed up, run five times with alternating first runner,
+   and report mean milliseconds and result equality. The intermediate list adds
+   an allocation; observed timing depends on the runtime, GC and system load
+   and does not establish that one variant is always faster.
+
+No test project is required by lab 07; temporary validation stays outside the
+repository. No separate lab report or commit is created for this lab.
+
 ## Lab 06: Domain events, delegates and lambdas
 
 The order domain follows the lab's order variant. `OrderChangeKind` describes
