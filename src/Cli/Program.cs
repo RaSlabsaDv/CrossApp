@@ -12,7 +12,22 @@ using Core.Storage;
 
 try
 {
-    return Run(args);
+    return await RunAsync(args);
+}
+catch (OperationCanceledException)
+{
+    Console.WriteLine("Імпорт скасовано.");
+    return 2;
+}
+catch (DomainException ex)
+{
+    Console.WriteLine($"Дані відхилено: {ex.Message}");
+    return 1;
+}
+catch (FileNotFoundException ex)
+{
+    Console.WriteLine($"Файл не знайдено: {ex.FileName}");
+    return 1;
 }
 catch (Exception ex) when (ex is ArgumentException or InvalidOperationException
     or IOException or UnauthorizedAccessException or System.Text.Json.JsonException or NotSupportedException)
@@ -21,8 +36,10 @@ catch (Exception ex) when (ex is ArgumentException or InvalidOperationException
     return 1;
 }
 
-static int Run(string[] args)
+static async Task<int> RunAsync(string[] args)
 {
+    if (args.Length > 0 && args[0] == "--import-orders")
+        return await OrderImportCommand.RunAsync(args[1..]);
     if (ReportOptions.TryParse(args) is { } reportOptions)
         return RunReport(reportOptions);
     if (args is ["--demo"])
@@ -48,6 +65,36 @@ static int RunReport(ReportOptions options)
     var items = new OrderService(StoreFactory.Create(options.StoreArgs)).All();
     switch (options.Command)
     {
+
+        case "report-all":
+        {
+            string[] commands =
+            [
+                "report-top",
+                "report-orders",
+                "report-high",
+                "report-low",
+                "report-groups",
+                "report-sum",
+                "report-deferred",
+                "report-join",
+                "report-query",
+                "report-benchmark"
+            ];
+        
+            foreach (string command in commands)
+            {
+                Console.WriteLine();
+                Console.WriteLine(new string('=', 60));
+                Console.WriteLine($"  {command.ToUpperInvariant()}");
+                Console.WriteLine(new string('=', 60));
+        
+                RunReport(options with { Command = command });
+            }
+        
+            break;
+        }
+
         case "report-top":
             PrintCustomers(ReportService.TopCustomers(items, options.Take));
             break;
@@ -523,7 +570,7 @@ static bool TryDo(string title, Action action)
         Console.WriteLine($"  {title}: виняток НЕ спрацював — інваріант відсутній!");
         return false;
     }
-    catch (Exception ex) when (ex is ArgumentException or InvalidOperationException)
+    catch (Exception ex) when (ex is DomainException or ArgumentException or InvalidOperationException)
     {
         Console.WriteLine($"  {title}: {ex.GetType().Name} — {ex.Message}");
         return true;

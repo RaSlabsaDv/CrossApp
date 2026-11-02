@@ -52,14 +52,20 @@ public sealed class Order
     public OrderDto ToDto() => new(Id, Customer,
         _lines.Select(line => line.ToDto()).ToArray(), Total, IsConfirmed, Status.ToString());
 
-    public static Order FromDto(OrderDto dto)
+    public static Order FromDto(OrderDto dto) => FromDto(dto, default);
+
+    public static Order FromDto(OrderDto dto, CancellationToken ct)
     {
+        ct.ThrowIfCancellationRequested();
         ArgumentNullException.ThrowIfNull(dto);
         ArgumentNullException.ThrowIfNull(dto.Products);
 
         Order order = Create(dto.Id, dto.Customer);
         foreach (ProductDto product in dto.Products)
+        {
+            ct.ThrowIfCancellationRequested();
             order.AddValidatedLine(OrderLine.FromDto(product));
+        }
 
         if (dto.TotalPrice != order.Total)
             throw new ArgumentException(
@@ -86,7 +92,7 @@ public sealed class Order
     private void EnsureDraft()
     {
         if (Status != OrderStatus.Draft)
-            throw new InvalidOperationException(
+            throw new DomainException(
                 $"Order {Id} has status {Status}; only draft orders can be modified");
     }
 
@@ -100,10 +106,10 @@ public sealed class Order
             _ => false
         };
         if (!allowed)
-            throw new InvalidOperationException(
+            throw new DomainException(
                 $"Order {Id} cannot transition from {Status} to {nextStatus}");
         if (nextStatus == OrderStatus.Confirmed && _lines.Count == 0)
-            throw new InvalidOperationException($"Cannot confirm empty order {Id}");
+            throw new DomainException($"Cannot confirm empty order {Id}");
 
         _status = nextStatus;
     }
@@ -112,7 +118,7 @@ public sealed class Order
     {
         EnsureDraft();
         if (line.Total > decimal.MaxValue - Total)
-            throw new InvalidOperationException(
+            throw new DomainException(
                 $"Adding product {line.ProductId} would exceed the maximum total for order {Id}");
 
         _lines.Add(line);

@@ -41,13 +41,13 @@ public sealed class OrderService
     {
         Order order = RequireOrder(id);
         if (order.Status != OrderStatus.Draft)
-            throw new InvalidOperationException($"Order {order.Id} must be a draft before confirmation");
+            throw new DomainException($"Order {order.Id} must be a draft before confirmation");
 
         int confirmedCount = _store.List()
             .Count(existing => string.Equals(existing.CustomerId, order.CustomerId,
                 StringComparison.OrdinalIgnoreCase) && existing.IsConfirmed);
         if (confirmedCount >= MaxConfirmedOrdersPerCustomer)
-            throw new InvalidOperationException(
+            throw new DomainException(
                 $"Customer {order.CustomerId} already has {confirmedCount} confirmed orders; the limit is {MaxConfirmedOrdersPerCustomer}");
 
         order.Confirm();
@@ -61,6 +61,50 @@ public sealed class OrderService
         order.Cancel();
         _store.Update(order);
         OnChanged(order, OrderChangeKind.OrderCancelled);
+    }
+
+    public async Task<int> ImportAsync(IOrderImporter importer, string path,
+        CancellationToken ct = default, IProgress<int>? progress = null)
+    {
+        ArgumentNullException.ThrowIfNull(importer);
+        ct.ThrowIfCancellationRequested();
+        var items = await importer.LoadAsync(path, ct);
+        int added = 0;
+        progress?.Report(0);
+        for (int i = 0; i < items.Count; i++)
+        {
+            ct.ThrowIfCancellationRequested();
+            if (AddImported(items[i])) added++;
+            progress?.Report((int)((i + 1L) * 100 / items.Count));
+        }
+        if (items.Count == 0) progress?.Report(100);
+        return added;
+    }
+
+    public async Task<int> ImportStreamAsync(IOrderImporter importer, string path,
+        CancellationToken ct = default)
+    {
+        ArgumentNullException.ThrowIfNull(importer);
+        ct.ThrowIfCancellationRequested();
+        int added = 0;
+        await foreach (var order in importer.StreamAsync(path, ct).WithCancellation(ct))
+        {
+            ct.ThrowIfCancellationRequested();
+            if (AddImported(order)) added++;
+        }
+        return added;
+    }
+
+    private bool AddImported(Order order)
+    {
+        if (_store.GetById(order.Id) is not null) return false;
+        if (order.IsConfirmed && _store.List().Count(existing => existing.IsConfirmed &&
+            string.Equals(existing.CustomerId, order.CustomerId, StringComparison.OrdinalIgnoreCase))
+            >= MaxConfirmedOrdersPerCustomer)
+            throw new DomainException($"Customer {order.CustomerId} already has the maximum number of confirmed orders");
+        _store.Add(order);
+        OnChanged(order, OrderChangeKind.OrderCreated);
+        return true;
     }
 
     public IReadOnlyList<Order> All() => _store.List();
@@ -95,5 +139,5 @@ public sealed class OrderService
     }
 
     private Order RequireOrder(string id) => _store.GetById(id)
-        ?? throw new InvalidOperationException($"Order with ID {id} does not exist");
+        ?? throw new DomainException($"Order with ID {id} does not exist");
 }

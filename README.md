@@ -1,5 +1,80 @@
 # CrossApp
 
+## Lab 08: async import, cancellation and Core tests
+
+The order variant imports a JSON array of complete orders with their product
+lines (`OrderDto`), preserving the aggregate and verifying its calculated total.
+The old single-file CSV/product demonstration remains available.
+
+Run from `CrossApp`:
+
+```bash
+dotnet build -m:1
+dotnet test -m:1
+dotnet test -m:1  # repeat to check isolation
+dotnet test -m:1 --collect:"XPlat Code Coverage" --results-directory TestResults/lab08
+
+dotnet run --project src/Cli -f net10.0 -- --import-orders data/lab08-orders.json
+dotnet run --project src/Cli -f net10.0 -- --import-orders data/lab08-orders.json --stream
+dotnet run --project src/Cli -f net10.0 -- --import-orders data/lab08-invalid.json
+
+# Deterministic cancellation, including on a small file:
+dotnet run --project src/Cli -f net10.0 -- --import-orders data/lab08-orders.json --timeout-ms 0
+
+# Persist imported orders. The second invocation adds zero records.
+dotnet run --project src/Cli -f net10.0 -- --import-orders data/lab08-orders.json --file --path /tmp/lab08-orders.json
+```
+
+Use Ctrl+C during a large import, or pass `--timeout-ms 2000`. Both signal the
+linked token through `Cli -> OrderService -> JsonOrderImporter -> JSON/file I/O`
+and the loops converting orders and product lines. Cancellation prints
+`Імпорт скасовано.` and exits with code 2; rejected records and technical errors
+exit with code 1; success exits with code 0. `--timeout-ms 0` cancels immediately,
+whereas positive values use `CancelAfter`. No artificial delays or `Task.Run`
+are used in production. The timeout test waits until the fake importer starts,
+then arms a real timer and verifies that the user token remains active.
+
+`IOrderImporter.LoadAsync` uses `DeserializeAsync` and an asynchronous
+`FileStream`. The buffered service validates the full input before adding it.
+`StreamAsync` uses `DeserializeAsyncEnumerable` and `[EnumeratorCancellation]`;
+`ImportStreamAsync` consumes it with `await foreach`. This avoids retaining the
+whole input list, although the in-memory destination still retains all imported
+orders. Streaming can leave successfully added records if a later record is
+invalid. Both modes retain completed writes on cancellation; neither promises
+a transaction. Repeating an import skips existing IDs case-insensitively and
+emits no duplicate events. Imported confirmed orders also obey the customer limit.
+
+The buffered mode reports percentages via `IProgress<int>` for the insertion
+phase, including skipped duplicates. It does not claim to measure JSON-reading
+time. Streaming prints the final imported count; no total record count is known
+in advance. Console progress is delivered synchronously to keep output ordered.
+Changed events fire once per added aggregate after storage succeeds.
+
+Business-rule failures now use `Core.DomainException`. Invalid method arguments
+still use `ArgumentException` and its subclasses. Import validation wraps invalid
+DTO data with a record number and preserves `InnerException`; `JsonException`,
+I/O errors and cancellation propagate with their original types.
+`IOrderStore` and LINQ reports remain synchronous; file-store writes retain their
+existing synchronous contract.
+
+`tests/Core.Tests` targets .NET 10 and references only Core. Its fixed data is
+local to the tests, with fresh in-memory stores and no dependency on `SampleData`
+or repository data. There are 23 cases, including theories, event/state checks,
+deterministic reports, idempotence, cancellation during insertion, timeout origin,
+progress and JSON validation. Only one test uses a temporary file, deleted in
+`finally`. Coverlet is configured for the command above.
+
+Validation in this restricted workspace: build passed for .NET 9 and .NET 10;
+all 23 cases passed twice using a supplemental in-process invocation of the same
+xUnit tests. VSTest's normal `dotnet test` and coverage collection were blocked
+by denied local sockets (`SocketException: Permission denied`). This is not a
+successful standard test run. Coverlet was additionally run directly against the supplemental runner: Core line
+coverage is 45.92% (327/712), branch coverage 44.34% (98/221). The new import
+methods have 100% line coverage. This is a separate measurement, not a successful
+`--collect` run. To reproduce it after restoring the test packages:
+`python ../Reports/lab8/verification/verify.py`. Details and actual output:
+[lab 08 report](../Reports/lab8/lab8.md).
+
 ## Lab 07: LINQ reports
 
 Reports use the order variant of the lab: top customers by total order value,
@@ -292,10 +367,10 @@ wrapper, so callers cannot modify the internal list.
 - Product ID, name and SKU must not be blank (`ArgumentException`). When creating a line without a separate SKU, its product ID is used as the SKU.
 - Line quantity must be greater than zero (`ArgumentOutOfRangeException`).
 - Product price must be non-negative (`ArgumentOutOfRangeException`); zero is allowed.
-- Line totals must fit within `decimal` (`ArgumentOutOfRangeException`); adding a line must not overflow the order total (`InvalidOperationException`).
-- An empty order cannot be confirmed (`InvalidOperationException`).
-- A confirmed order cannot accept new lines or be confirmed again (`InvalidOperationException`).
-- A cancelled order cannot accept new lines, be confirmed or be cancelled again (`InvalidOperationException`).
+- Line totals must fit within `decimal` (`ArgumentOutOfRangeException`); adding a line must not overflow the order total (`DomainException`).
+- An empty order cannot be confirmed (`DomainException`).
+- A confirmed order cannot accept new lines or be confirmed again (`DomainException`).
+- A cancelled order cannot accept new lines, be confirmed or be cancelled again (`DomainException`).
 - The total stored in an order DTO must equal the sum of its lines (`ArgumentException`).
 - An explicit DTO status must be known and agree with `IsConfirmed` (`ArgumentException`).
 
@@ -373,7 +448,7 @@ print the accepted entity count and any additional domain errors.
 `OrderService.Confirm` checks that the customer has fewer than five confirmed
 orders before confirming another one. It counts distinct order IDs belonging
 to that customer; draft and cancelled orders do not count. When the limit is
-reached, it throws `InvalidOperationException` without changing the new order.
+reached, it throws `DomainException` without changing the new order.
 
 The rule belongs in a service because one `Order` does not know the customer's
 other orders. The service obtains the customer's orders through `IOrderStore`,
@@ -392,7 +467,7 @@ allowed transitions with a switch expression before changing the private state:
 | Draft | Cancel | Cancelled |
 | Confirmed | Cancel | Cancelled |
 
-All other transitions throw `InvalidOperationException`. Only draft orders
+All other transitions throw `DomainException` (lab 08). Only draft orders
 accept new lines. `IsConfirmed` is calculated from `Status`, so there are no
 independent state fields that can disagree. DTO mapping preserves all three
 states, including empty cancelled orders.

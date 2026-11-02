@@ -1,0 +1,62 @@
+[
+  {
+    "Id": "LAB08-1",
+    "Customer": {
+      "Id": "C-LAB08",
+      "Name": "Олена",
+      "Email": "olena@example.com"
+    },
+    "Products": [
+      {
+        "Id": "P-1",
+        "Sku": "SKU-CABLE",
+        "Name": "Кабель",
+        "Price": 25,
+        "Quantity": 1
+      }
+    ],
+    "TotalPrice": 25,
+    "IsConfirmed": false,
+    "Status": "Draft"
+  },
+  {
+    "Id": "LAB08-2",
+    "Customer": {
+      "Id": "C-LAB08",
+      "Name": "Олена",
+      "Email": "olena@example.com"
+    },
+    "Products": [
+      {
+        "Id": "P-1",
+        "Sku": "SKU-CABLE",
+        "Name": "Кабель",
+        "Price": 25,
+        "Quantity": 0
+      }
+    ],
+    "TotalPrice": 50,
+    "IsConfirmed": false,
+    "Status": "Draft"
+  },
+  {
+    "Id": "LAB08-3",
+    "Customer": {
+      "Id": "C-LAB08",
+      "Name": "Олена",
+      "Email": "olena@example.com"
+    },
+    "Products": [
+      {
+        "Id": "P-1",
+        "Sku": "SKU-CABLE",
+        "Name": "Кабель",
+        "Price": 25,
+        "Quantity": 3
+      }
+    ],
+    "TotalPrice": 75,
+    "IsConfirmed": false,
+    "Status": "Draft"
+  }
+]

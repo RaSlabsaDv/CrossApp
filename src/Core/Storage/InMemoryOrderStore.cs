@@ -28,7 +28,7 @@ public sealed class InMemoryOrderStore : IOrderStore
     {
         ArgumentNullException.ThrowIfNull(item);
         if (_items.ContainsKey(item.Id))
-            throw new InvalidOperationException($"Order with ID {item.Id} already exists");
+            throw new DomainException($"Order with ID {item.Id} already exists");
         _items.Add(item.Id, item.ToDto());
     }
 
@@ -36,7 +36,7 @@ public sealed class InMemoryOrderStore : IOrderStore
     {
         ArgumentNullException.ThrowIfNull(item);
         if (!_items.ContainsKey(item.Id))
-            throw new InvalidOperationException($"Order with ID {item.Id} does not exist");
+            throw new DomainException($"Order with ID {item.Id} does not exist");
         _items[item.Id] = item.ToDto();
     }
 

@@ -25,7 +25,7 @@ public static class DomainImporter
             {
                 entities.Add(fromDto(result.Items[index]));
             }
-            catch (Exception ex) when (ex is ArgumentException or InvalidOperationException)
+            catch (Exception ex) when (ex is DomainException or ArgumentException or InvalidOperationException)
             {
                 errors.Add($"Record {index + 1}: {ex.Message}");
             }
